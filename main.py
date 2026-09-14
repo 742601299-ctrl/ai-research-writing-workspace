@@ -36,9 +36,13 @@ try:
 
     print("\n研究问题：")
 
-    for i, question in enumerate(plan.questions, start=1):
+    for i, item in enumerate(plan.research_questions, start=1):
 
-        print(f"{i}. {question}")
+        print(f"\n{i}. {item.question}")
+
+        for query in item.search_queries:
+
+            print(f"   - {query}")
 
 except Exception as e:
 
