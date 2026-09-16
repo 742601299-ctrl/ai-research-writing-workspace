@@ -1,14 +1,12 @@
 from pydantic import BaseModel
 
+from app.models.research_source import ResearchSource
+
 class Evidence(BaseModel):
 
     research_question: str
 
-    title: str
-
-    url: str
-
-    abstract: str
+    source: ResearchSource
 
     relevance: float
 

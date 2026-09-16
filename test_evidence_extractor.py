@@ -4,15 +4,13 @@ from dotenv import load_dotenv
 
 from openai import OpenAI
 
-from app.models.search import ResearchQuestionResult
-
-from app.tools.web_search import WebSearchTool
+from app.models.research_source import ResearchSource
 
 from app.services.evidence_extractor import EvidenceExtractor
 
 load_dotenv()
 
-# 1. Define research question and search query
+# 1. Define research question
 
 research_question = (
 
@@ -20,37 +18,69 @@ research_question = (
 
 )
 
-search_query = (
+# 2. Build ResearchSource objects directly
 
-    "AI agents improve code quality software development"
+# We only test EvidenceExtractor here.
 
-)
+sources = [
 
-# 2. Search sources using Tavily
+    ResearchSource(
 
-search_tool = WebSearchTool()
+        source_type="web",
 
-search_results = search_tool.search(
+        title="AI Agents for Code Review",
 
-    query=search_query,
+        locator="https://example.com/code-review",
 
-    max_results=3
+        abstract=(
 
-)
+            "AI agents can improve software code quality by automating "
 
-# 3. Build ResearchQuestionResult
+            "code review, detecting bugs, and identifying potential "
 
-question_result = ResearchQuestionResult(
+            "security vulnerabilities."
 
-    research_question=research_question,
+        ),
 
-    search_query=search_query,
+        content=(
 
-    search_results=search_results
+            "AI agents are increasingly used in automated code review "
 
-)
+            "and software quality assurance workflows."
 
-# 4. Create EvidenceExtractor
+        )
+
+    ),
+
+    ResearchSource(
+
+        source_type="web",
+
+        title="AI Agents for Project Scheduling",
+
+        locator="https://example.com/project-scheduling",
+
+        abstract=(
+
+            "AI agents can assist project managers with task scheduling, "
+
+            "resource allocation, and project progress monitoring."
+
+        ),
+
+        content=(
+
+            "AI agents can support software project management by "
+
+            "automating scheduling and resource planning."
+
+        )
+
+    )
+
+]
+
+# 3. Create EvidenceExtractor
 
 client = OpenAI(
 
@@ -66,15 +96,17 @@ evidence_extractor = EvidenceExtractor(
 
 )
 
-# 5. Extract evidence
+# 4. Evaluate evidence relevance
 
 evidences = evidence_extractor.extract(
 
-    question_result
+    research_question=research_question,
+
+    sources=sources
 
 )
 
-# 6. Print results
+# 5. Print results
 
 print("=== Evidence Extraction Test ===")
 
@@ -98,17 +130,25 @@ for index, evidence in enumerate(
 
     print(
 
-        f"Title: "
+        f"Source Type: "
 
-        f"{evidence.title}"
+        f"{evidence.source.source_type}"
 
     )
 
     print(
 
-        f"URL: "
+        f"Title: "
 
-        f"{evidence.url}"
+        f"{evidence.source.title}"
+
+    )
+
+    print(
+
+        f"Locator: "
+
+        f"{evidence.source.locator}"
 
     )
 
@@ -116,7 +156,7 @@ for index, evidence in enumerate(
 
         f"Abstract: "
 
-        f"{evidence.abstract}"
+        f"{evidence.source.abstract}"
 
     )
 
@@ -130,11 +170,23 @@ for index, evidence in enumerate(
 
     print("-" * 80)
 
+# 6. Basic checks
+
+assert len(evidences) == len(sources)
+
+for evidence in evidences:
+
+    assert evidence.research_question == research_question
+
+    assert evidence.source in sources
+
+    assert 0 <= evidence.relevance <= 1
+
 print(
 
-    f"\nTotal search results: "
+    f"\nTotal sources: "
 
-    f"{len(search_results)}"
+    f"{len(sources)}"
 
 )
 
@@ -145,3 +197,5 @@ print(
     f"{len(evidences)}"
 
 )
+
+print("\nAll EvidenceExtractor tests passed.")

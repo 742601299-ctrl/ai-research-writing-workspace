@@ -1,8 +1,6 @@
-from app.models.search import ResearchQuestionResult
+from app.models.research_source import ResearchSource
 
 from app.models.evidence import Evidence, EvidenceRelevanceResult
-
-from app.tools.abstract_extractor import AbstractExtractor
 
 class EvidenceExtractor:
 
@@ -12,21 +10,19 @@ class EvidenceExtractor:
 
         self.model = model
 
-        self.abstract_extractor = AbstractExtractor()
-
     def extract(
 
         self,
 
-        question_result: ResearchQuestionResult
+        research_question: str,
+
+        sources: list[ResearchSource]
 
     ) -> list[Evidence]:
 
         evidences = []
 
-        for search_result in question_result.search_results:
-
-            abstract = self.abstract_extractor.extract(search_result)
+        for source in sources:
 
             prompt = f"""
 
@@ -34,15 +30,15 @@ You are a research evidence relevance evaluator.
 
 Research question:
 
-{question_result.research_question}
+{research_question}
 
 Source title:
 
-{search_result.title}
+{source.title}
 
 Source abstract:
 
-{abstract}
+{source.abstract}
 
 Your task:
 
@@ -92,13 +88,9 @@ Do not invent information.
 
             evidence = Evidence(
 
-                research_question=question_result.research_question,
+                research_question=research_question,
 
-                title=search_result.title,
-
-                url=search_result.url,
-
-                abstract=abstract,
+                source=source,
 
                 relevance=relevance_result.relevance
 
