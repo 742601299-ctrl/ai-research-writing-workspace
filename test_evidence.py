@@ -1,73 +1,109 @@
-from dotenv import load_dotenv
+from app.models.research_source import ResearchSource
 
-from openai import OpenAI
+from app.models.evidence import Evidence
 
-from app.models.search import SearchResult, ResearchQuestionResult
+source = ResearchSource(
 
-from app.services.evidence_extractor import EvidenceExtractor
+    source_type="web",
 
-import os
+    title="Example Source",
 
-load_dotenv()
+    locator="https://example.com/article",
 
-client = OpenAI(
+    abstract=(
 
-    api_key=os.getenv("OPENAI_API_KEY")
+        "AI agents can automate code review, detect potential defects, "
 
-)
+        "and generate test cases."
 
-model = os.getenv("OPENAI_MODEL")
+    ),
 
-question_result = ResearchQuestionResult(
+    content=(
 
-    research_question="AI Agent 如何提升软件开发中的代码质量？",
+        "AI agents can automate code review, detect potential defects, "
 
-    search_query="AI agents improving code quality",
+        "and generate test cases. These capabilities may help developers "
 
-    search_results=[
+        "identify software quality issues earlier in the development process."
 
-        SearchResult(
-
-            title="Example Source",
-
-            url="https://example.com/article",
-
-            snippet=(
-
-                "AI agents can automate code review, detect potential defects, "
-
-                "and generate test cases. These capabilities may help developers "
-
-                "identify software quality issues earlier in the development process."
-
-            )
-
-        )
-
-    ]
+    )
 
 )
 
-extractor = EvidenceExtractor(
+evidence = Evidence(
 
-    client=client,
+    research_question=(
 
-    model=model
+        "AI Agent 如何提升软件开发中的代码质量？"
+
+    ),
+
+    source=source,
+
+    relevance=0.75
 
 )
 
-evidences = extractor.extract(question_result)
+print("\n=== Evidence Model Test ===")
 
-for i, evidence in enumerate(evidences, start=1):
+print(
 
-    print(f"\nEvidence {i}")
+    f"Question: "
 
-    print(f"Question: {evidence.research_question}")
+    f"{evidence.research_question}"
 
-    print(f"Source: {evidence.source_title}")
+)
 
-    print(f"URL: {evidence.source_url}")
+print(
 
-    print(f"Evidence: {evidence.evidence_text}")
+    f"Source Type: "
 
-    print(f"Relevance: {evidence.relevance_score}")
+    f"{evidence.source.source_type}"
+
+)
+
+print(
+
+    f"Title: "
+
+    f"{evidence.source.title}"
+
+)
+
+print(
+
+    f"Locator: "
+
+    f"{evidence.source.locator}"
+
+)
+
+print(
+
+    f"Relevance: "
+
+    f"{evidence.relevance}"
+
+)
+
+assert evidence.research_question == (
+
+    "AI Agent 如何提升软件开发中的代码质量？"
+
+)
+
+assert evidence.source == source
+
+assert evidence.source.source_type == "web"
+
+assert evidence.source.title == "Example Source"
+
+assert evidence.source.locator == (
+
+    "https://example.com/article"
+
+)
+
+assert evidence.relevance == 0.75
+
+print("\nEvidence model test passed.")

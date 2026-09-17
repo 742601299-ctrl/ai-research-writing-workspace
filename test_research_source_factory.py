@@ -2,6 +2,8 @@ from app.models.search import SearchResult
 
 from app.services.research_source_factory import ResearchSourceFactory
 
+from app.tools.pdf_loader import PDFLoader
+
 factory = ResearchSourceFactory()
 
 # Test 1: raw_content 中存在 Abstract
@@ -143,5 +145,62 @@ assert source.locator == "https://example.com/simple"
 assert source.abstract == result_without_raw_content.content
 
 assert source.content == result_without_raw_content.content
+
+
+print("\n=== Test 4: PDF Document -> ResearchSource ===")
+
+pdf_path = "test_files/sample.pdf"
+
+# 1. Load PDF into Document
+
+pdf_loader = PDFLoader()
+
+document = pdf_loader.load(pdf_path)
+
+# 2. Convert Document into ResearchSource
+
+pdf_source = factory.from_document(document)
+
+# 3. Print result
+
+print(f"Source Type: {pdf_source.source_type}")
+
+print(f"Title: {pdf_source.title}")
+
+print(f"Locator: {pdf_source.locator}")
+
+print(f"Abstract: {pdf_source.abstract}")
+
+print(f"Content Length: {len(pdf_source.content)}")
+
+# 4. Validate ResearchSource
+
+assert pdf_source.source_type == "pdf"
+
+assert pdf_source.title == (
+
+    "A hybrid approach for outlier detection in pharmaceutical "
+
+    "cold chain logistics: A case study"
+
+)
+
+assert pdf_source.locator == pdf_path
+
+assert pdf_source.abstract != ""
+
+assert (
+
+    "Pharmaceutical products are highly sensitive"
+
+    in pdf_source.abstract
+
+)
+
+assert "1. Introduction" not in pdf_source.abstract
+
+assert pdf_source.content == document.text
+
+print("\nPDF ResearchSource test passed.")
 
 print("\nAll ResearchSourceFactory tests passed.")

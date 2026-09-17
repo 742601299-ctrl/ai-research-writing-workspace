@@ -14,6 +14,8 @@ from app.services.evidence_store import EvidenceStore
 
 from app.services.research_source_factory import ResearchSourceFactory
 
+from app.tools.pdf_loader import PDFLoader
+
 load_dotenv()
 
 api_key = os.getenv("OPENAI_API_KEY")
@@ -34,6 +36,8 @@ search_tool = WebSearchTool()
 
 research_source_factory = ResearchSourceFactory()
 
+pdf_loader = PDFLoader()
+
 evidence_extractor = EvidenceExtractor(
 
     client=client,
@@ -43,6 +47,12 @@ evidence_extractor = EvidenceExtractor(
 )
 
 topic = input("请输入你的研究主题：")
+
+pdf_path = input(
+
+    "请输入参考 PDF 路径（可留空）："
+
+).strip()
 
 try:
 
@@ -69,6 +79,52 @@ try:
         for query in item.search_queries:
 
             print(f"   - {query}")
+
+    pdf_source = None
+
+    if pdf_path:
+
+        document = pdf_loader.load(
+
+            pdf_path
+
+        )
+
+        pdf_source = (
+
+            research_source_factory.from_document(
+
+                document
+
+            )
+
+        )
+
+        print("\n=== PDF ResearchSource ===")
+
+        print(
+
+            f"Title: "
+
+            f"{pdf_source.title}"
+
+        )
+
+        print(
+
+            f"Locator: "
+
+            f"{pdf_source.locator}"
+
+        )
+
+        print(
+
+            f"Abstract: "
+
+            f"{pdf_source.abstract}"
+
+        )
 
     print("\n=== Web Search Results ===")
 
@@ -103,6 +159,14 @@ try:
             for result in results
 
         ]
+
+        if pdf_source:
+
+            sources.append(
+
+                pdf_source
+
+            )
 
         research_results.append(
 
