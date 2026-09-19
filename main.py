@@ -16,6 +16,14 @@ from app.services.research_source_factory import ResearchSourceFactory
 
 from app.tools.pdf_loader import PDFLoader
 
+from app.tools.token_chunker import TokenChunker
+
+from app.services.embedding_service import EmbeddingService
+
+from app.services.in_memory_vector_store import InMemoryVectorStore
+
+from app.services.retriever import Retriever
+
 load_dotenv()
 
 api_key = os.getenv("OPENAI_API_KEY")
@@ -46,6 +54,22 @@ evidence_extractor = EvidenceExtractor(
 
 )
 
+chunker = TokenChunker(
+
+    chunk_size=800,
+
+    overlap=50
+
+)
+
+embedding_service = EmbeddingService(
+
+    client=client
+
+)
+
+vector_store = InMemoryVectorStore()
+
 topic = input("请输入你的研究主题：")
 
 pdf_path = input(
@@ -55,6 +79,12 @@ pdf_path = input(
 ).strip()
 
 try:
+
+    # =========================================================
+
+    # 1. Research Planning
+
+    # =========================================================
 
     plan = planner.create_plan(topic)
 
@@ -80,7 +110,15 @@ try:
 
             print(f"   - {query}")
 
+    # =========================================================
+
+    # 2. PDF Loading
+
+    # =========================================================
+
     pdf_source = None
+
+    document = None
 
     if pdf_path:
 
@@ -126,9 +164,17 @@ try:
 
         )
 
+    # =========================================================
+
+    # 3. Web Search
+
+    # =========================================================
+
     print("\n=== Web Search Results ===")
 
     research_results = []
+
+    all_sources = []
 
     for i, item in enumerate(
 
@@ -159,6 +205,16 @@ try:
             for result in results
 
         ]
+
+        # Save Web sources for V0.5 retrieval indexing
+
+        all_sources.extend(
+
+            sources
+
+        )
+
+        # Keep original V0.4 Evidence behavior
 
         if pdf_source:
 
@@ -194,6 +250,166 @@ try:
 
             print(f"     {result.content[:200]}...")
 
+    # =========================================================
+
+    # 4. V0.5 Retrieval Index
+
+    # =========================================================
+
+    if pdf_source:
+
+        all_sources.append(
+
+            pdf_source
+
+        )
+
+    print("\n=== V0.5 Retrieval ===")
+
+    all_chunks = []
+
+    for source in all_sources:
+
+        if (
+
+            pdf_source
+
+            and source.source_id == pdf_source.source_id
+
+        ):
+
+            chunks = chunker.chunk(
+
+                source=source,
+
+                pages=document.pages
+
+            )
+
+        else:
+
+            chunks = chunker.chunk(
+
+                source=source
+
+            )
+
+        all_chunks.extend(
+
+            chunks
+
+        )
+
+    # =========================================================
+
+    # 5. Embedding + VectorStore
+
+    # =========================================================
+
+    if all_chunks:
+
+        chunk_texts = [
+
+            chunk.text
+
+            for chunk in all_chunks
+
+        ]
+
+        chunk_vectors = embedding_service.embed(
+
+            chunk_texts
+
+        )
+
+        vector_store.add(
+
+            chunks=all_chunks,
+
+            vectors=chunk_vectors
+
+        )
+
+        # =====================================================
+
+        # 6. ResearchQuestion -> Retriever
+
+        # =====================================================
+
+        retriever = Retriever(
+
+            embedding_service=embedding_service,
+
+            vector_store=vector_store
+
+        )
+
+        for i, item in enumerate(
+
+            plan.research_questions,
+
+            start=1
+
+        ):
+
+            print(
+
+                f"\nResearch Question {i}: "
+
+                f"{item.question}"
+
+            )
+
+            retrieval_results = retriever.retrieve(
+
+                query=item.question,
+
+                top_k=3
+
+            )
+
+            for rank, result in enumerate(
+
+                retrieval_results,
+
+                start=1
+
+            ):
+
+                print(
+
+                    f"  Rank {rank} | "
+
+                    f"Similarity: "
+
+                    f"{result.similarity:.4f} | "
+
+                    f"Source ID: "
+
+                    f"{result.chunk.source_id} | "
+
+                    f"Pages: "
+
+                    f"{result.chunk.page_start}-"
+
+                    f"{result.chunk.page_end}"
+
+                )
+
+                print(
+
+                    f"  "
+
+                    f"{result.chunk.text[:300]}..."
+
+                )
+
+    # =========================================================
+
+    # 7. Evidence Extraction
+
+    # =========================================================
+
     print("\n=== Evidence Extraction ===")
 
     evidence_store = EvidenceStore()
@@ -209,6 +425,12 @@ try:
         )
 
         evidence_store.add_all(evidences)
+
+    # =========================================================
+
+    # 8. Evidence Output
+
+    # =========================================================
 
     for i, evidence in enumerate(
 
