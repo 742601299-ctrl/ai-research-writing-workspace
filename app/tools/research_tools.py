@@ -164,6 +164,8 @@ class ResearchTools:
 
                 RetrievalToolResult(
 
+                    chunk_id=result.chunk.chunk_id,
+
                     source_id=result.chunk.source_id,
 
                     text=result.chunk.text,

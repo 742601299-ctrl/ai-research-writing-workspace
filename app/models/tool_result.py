@@ -1,3 +1,5 @@
+import json
+
 from pydantic import BaseModel
 
 class SearchToolResult(BaseModel):
@@ -13,6 +15,8 @@ class SearchToolResult(BaseModel):
     abstract: str
 
 class RetrievalToolResult(BaseModel):
+
+    chunk_id: str
 
     source_id: str
 
@@ -35,3 +39,23 @@ class SourceDetailResult(BaseModel):
     locator: str | None = None
 
     abstract: str
+
+class ToolExecutionResult(BaseModel):
+
+    success: bool
+
+    tool_name: str
+
+    data: object | None = None
+
+    error: str | None = None
+
+    def to_observation(self) -> str:
+
+        return json.dumps(
+
+            self.model_dump(),
+
+            ensure_ascii=False
+
+        )

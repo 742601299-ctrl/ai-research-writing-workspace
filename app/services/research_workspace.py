@@ -45,3 +45,11 @@ class ResearchWorkspace:
             source_id
 
         )
+    
+    def get_summary(self) -> dict:
+
+        return {
+
+            "source_count": len(self._sources)
+
+        }
