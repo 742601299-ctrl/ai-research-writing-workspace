@@ -24,6 +24,18 @@ class NewFindingInput(BaseModel):
 
     supporting_chunk_ids: list[str]
 
+class NewGapInput(BaseModel):
+
+    description: str
+
+    supporting_finding_ids: list[str]
+
+class NewGapResearchQuestionInput(BaseModel):
+
+    question: str
+
+    gap_ids: list[str]
+
 class UpdateResearchStateArgs(BaseModel):
 
     new_findings: list[NewFindingInput] = Field(
@@ -32,7 +44,13 @@ class UpdateResearchStateArgs(BaseModel):
 
     )
 
-    new_gaps: list[str] = Field(
+    new_gaps: list[NewGapInput] = Field(
+
+        default_factory=list
+
+    )
+
+    new_gap_research_questions: list[NewGapResearchQuestionInput] = Field(
 
         default_factory=list
 

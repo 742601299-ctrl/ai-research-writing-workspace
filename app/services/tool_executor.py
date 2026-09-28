@@ -20,6 +20,8 @@ from app.models.research_state import (
 
     ResearchGap,
 
+    GapResearchQuestion,
+
     ResearchState
 
 )
@@ -44,7 +46,35 @@ class ToolExecutor:
 
         self.research_state = research_state
 
+        # All chunks that have actually been returned by
+
+        # retrieve_literature during this research session.
+
+        #
+
+        # key:
+
+        #     chunk_id
+
+        #
+
+        # value:
+
+        #     source_id
+
         self.retrieved_chunks: dict[str, str] = {}
+
+        # Chunk IDs returned by the most recent
+
+        # retrieve_literature call.
+
+        #
+
+        # This is useful for debugging and for exposing the
+
+        # most recent retrieval result to the agent loop.
+
+        self.last_retrieved_chunk_ids: list[str] = []
 
     def execute(
 
@@ -57,6 +87,12 @@ class ToolExecutor:
     ) -> ToolExecutionResult:
 
         try:
+
+            # =====================================================
+
+            # search_web
+
+            # =====================================================
 
             if tool_name == "search_web":
 
@@ -73,6 +109,12 @@ class ToolExecutor:
                     max_results=args.max_results
 
                 )
+
+            # =====================================================
+
+            # retrieve_literature
+
+            # =====================================================
 
             elif tool_name == "retrieve_literature":
 
@@ -92,6 +134,14 @@ class ToolExecutor:
 
                 )
 
+                # Reset the most recent retrieval list.
+
+                self.last_retrieved_chunk_ids = []
+
+                # Record every chunk that was actually returned
+
+                # during this research session.
+
                 for retrieval_result in result:
 
                     self.retrieved_chunks[
@@ -99,6 +149,18 @@ class ToolExecutor:
                         retrieval_result.chunk_id
 
                     ] = retrieval_result.source_id
+
+                    self.last_retrieved_chunk_ids.append(
+
+                        retrieval_result.chunk_id
+
+                    )
+
+            # =====================================================
+
+            # get_source
+
+            # =====================================================
 
             elif tool_name == "get_source":
 
@@ -114,6 +176,12 @@ class ToolExecutor:
 
                 )
 
+            # =====================================================
+
+            # update_research_state
+
+            # =====================================================
+
             elif tool_name == "update_research_state":
 
                 args = UpdateResearchStateArgs(
@@ -121,6 +189,142 @@ class ToolExecutor:
                     **arguments
 
                 )
+
+                # -------------------------------------------------
+
+                # Phase 0:
+
+                # Enforce semantic-state dependency order
+
+                # -------------------------------------------------
+
+                #
+
+                # Correct order:
+
+                #
+
+                # retrieved chunks
+
+                #     ->
+
+                # findings
+
+                #     ->
+
+                # research gaps
+
+                #     ->
+
+                # gap research questions
+
+                #
+
+                # IDs are generated when objects are committed.
+
+                # Therefore dependent objects must not be created
+
+                # in the same call.
+
+                # -------------------------------------------------
+
+                if (
+
+                    args.new_findings
+
+                    and (
+
+                        args.new_gaps
+
+                        or args.new_gap_research_questions
+
+                    )
+
+                ):
+
+                    return ToolExecutionResult(
+
+                        success=False,
+
+                        tool_name=tool_name,
+
+                        error=(
+
+                            "Create findings in a separate "
+
+                            "update_research_state call before creating "
+
+                            "gaps or gap-derived research questions."
+
+                        )
+
+                    )
+
+                if (
+
+                    args.new_gaps
+
+                    and args.new_gap_research_questions
+
+                ):
+
+                    return ToolExecutionResult(
+
+                        success=False,
+
+                        tool_name=tool_name,
+
+                        error=(
+
+                            "Create research gaps in a separate "
+
+                            "update_research_state call before creating "
+
+                            "gap-derived research questions."
+
+                        )
+
+                    )
+
+                # -------------------------------------------------
+
+                # Phase 1:
+
+                # Collect currently valid IDs
+
+                # -------------------------------------------------
+
+                existing_finding_ids = {
+
+                    finding.finding_id
+
+                    for finding in self.research_state.findings
+
+                }
+
+                existing_gap_ids = {
+
+                    gap.gap_id
+
+                    for gap in self.research_state.gaps
+
+                }
+
+                existing_evidence_chunk_ids = {
+
+                    evidence.chunk_id
+
+                    for evidence in self.research_state.evidence
+
+                }
+
+                # -------------------------------------------------
+
+                # Phase 2:
+
+                # Validate new findings
+
+                # -------------------------------------------------
 
                 for new_finding in args.new_findings:
 
@@ -142,9 +346,41 @@ class ToolExecutor:
 
                         )
 
-                    for chunk_id in new_finding.supporting_chunk_ids:
+                    for chunk_id in (
 
-                        if chunk_id not in self.retrieved_chunks:
+                        new_finding.supporting_chunk_ids
+
+                    ):
+
+                        # A chunk is valid only if:
+
+                        #
+
+                        # 1. it was actually returned by
+
+                        #    retrieve_literature during this session;
+
+                        #
+
+                        # OR
+
+                        #
+
+                        # 2. it already exists in the semantic
+
+                        #    evidence state.
+
+                        if (
+
+                            chunk_id not in self.retrieved_chunks
+
+                            and
+
+                            chunk_id
+
+                            not in existing_evidence_chunk_ids
+
+                        ):
 
                             return ToolExecutionResult(
 
@@ -156,7 +392,11 @@ class ToolExecutor:
 
                                     "Supporting chunk was not retrieved "
 
-                                    "during this research session: "
+                                    "during this research session and "
+
+                                    "does not exist in the current "
+
+                                    "research evidence state: "
 
                                     f"{chunk_id}"
 
@@ -164,53 +404,227 @@ class ToolExecutor:
 
                             )
 
-                    evidence_ids = []
+                # -------------------------------------------------
 
-                    for chunk_id in new_finding.supporting_chunk_ids:
+                # Phase 3:
 
-                        existing_evidence = next(
+                # Validate new research gaps
 
-                            (
+                # -------------------------------------------------
 
-                                evidence
+                for new_gap in args.new_gaps:
 
-                                for evidence in self.research_state.evidence
+                    if not new_gap.supporting_finding_ids:
 
-                                if evidence.chunk_id == chunk_id
+                        return ToolExecutionResult(
 
-                            ),
+                            success=False,
 
-                            None
+                            tool_name=tool_name,
 
-                        )
+                            error=(
 
-                        if existing_evidence is not None:
+                                "A research gap must have at least one "
 
-                            evidence_ids.append(
-
-                                existing_evidence.evidence_id
+                                "supporting finding."
 
                             )
 
-                            continue
+                        )
 
-                        evidence = TraceableEvidence(
+                    for finding_id in (
 
-                            chunk_id=chunk_id,
+                        new_gap.supporting_finding_ids
 
-                            source_id=self.retrieved_chunks[
+                    ):
+
+                        if finding_id not in existing_finding_ids:
+
+                            return ToolExecutionResult(
+
+                                success=False,
+
+                                tool_name=tool_name,
+
+                                error=(
+
+                                    "Supporting finding does not exist "
+
+                                    "in the current research state: "
+
+                                    f"{finding_id}"
+
+                                )
+
+                            )
+
+                # -------------------------------------------------
+
+                # Phase 4:
+
+                # Validate new gap-derived research questions
+
+                # -------------------------------------------------
+
+                for new_question in (
+
+                    args.new_gap_research_questions
+
+                ):
+
+                    if not new_question.gap_ids:
+
+                        return ToolExecutionResult(
+
+                            success=False,
+
+                            tool_name=tool_name,
+
+                            error=(
+
+                                "A gap research question must reference "
+
+                                "at least one research gap."
+
+                            )
+
+                        )
+
+                    for gap_id in new_question.gap_ids:
+
+                        if gap_id not in existing_gap_ids:
+
+                            return ToolExecutionResult(
+
+                                success=False,
+
+                                tool_name=tool_name,
+
+                                error=(
+
+                                    "Referenced research gap does not "
+
+                                    "exist in the current research "
+
+                                    "state: "
+
+                                    f"{gap_id}"
+
+                                )
+
+                            )
+
+                # -------------------------------------------------
+
+                # Phase 5:
+
+                # Prepare new state objects
+
+                #
+
+                # Nothing is committed yet.
+
+                # -------------------------------------------------
+
+                new_evidence = []
+
+                new_findings = []
+
+                new_gaps = []
+
+                new_gap_research_questions = []
+
+                evidence_by_chunk_id = {
+
+                    evidence.chunk_id: evidence
+
+                    for evidence in self.research_state.evidence
+
+                }
+
+                # -------------------------------------------------
+
+                # Build findings + traceable evidence
+
+                # -------------------------------------------------
+
+                for new_finding in args.new_findings:
+
+                    evidence_ids = []
+
+                    for chunk_id in (
+
+                        new_finding.supporting_chunk_ids
+
+                    ):
+
+                        evidence = evidence_by_chunk_id.get(
+
+                            chunk_id
+
+                        )
+
+                        if evidence is None:
+
+                            source_id = self.retrieved_chunks.get(
 
                                 chunk_id
 
-                            ]
+                            )
 
-                        )
+                            # This should normally never happen because
 
-                        self.research_state.evidence.append(
+                            # validation above already guarantees that
 
-                            evidence
+                            # a new evidence chunk was retrieved.
 
-                        )
+                            #
+
+                            # Keep the guard here so that we never
+
+                            # silently create evidence with a missing
+
+                            # source relationship.
+
+                            if source_id is None:
+
+                                return ToolExecutionResult(
+
+                                    success=False,
+
+                                    tool_name=tool_name,
+
+                                    error=(
+
+                                        "Unable to determine source_id "
+
+                                        "for supporting chunk: "
+
+                                        f"{chunk_id}"
+
+                                    )
+
+                                )
+
+                            evidence = TraceableEvidence(
+
+                                chunk_id=chunk_id,
+
+                                source_id=source_id
+
+                            )
+
+                            evidence_by_chunk_id[
+
+                                chunk_id
+
+                            ] = evidence
+
+                            new_evidence.append(
+
+                                evidence
+
+                            )
 
                         evidence_ids.append(
 
@@ -226,25 +640,69 @@ class ToolExecutor:
 
                     )
 
-                    self.research_state.findings.append(
+                    new_findings.append(
 
                         finding
 
                     )
 
-                for description in args.new_gaps:
+                # -------------------------------------------------
+
+                # Build research gaps
+
+                # -------------------------------------------------
+
+                for new_gap in args.new_gaps:
 
                     gap = ResearchGap(
 
-                        description=description
+                        description=new_gap.description,
+
+                        supporting_finding_ids=(
+
+                            new_gap.supporting_finding_ids
+
+                        )
 
                     )
 
-                    self.research_state.gaps.append(
+                    new_gaps.append(
 
                         gap
 
                     )
+
+                # -------------------------------------------------
+
+                # Build gap-derived research questions
+
+                # -------------------------------------------------
+
+                for new_question in (
+
+                    args.new_gap_research_questions
+
+                ):
+
+                    question = GapResearchQuestion(
+
+                        question=new_question.question,
+
+                        gap_ids=new_question.gap_ids
+
+                    )
+
+                    new_gap_research_questions.append(
+
+                        question
+
+                    )
+
+                # -------------------------------------------------
+
+                # Resolve gaps
+
+                # -------------------------------------------------
 
                 resolved_gap_ids = set(
 
@@ -252,7 +710,7 @@ class ToolExecutor:
 
                 )
 
-                self.research_state.gaps = [
+                remaining_gaps = [
 
                     gap
 
@@ -262,7 +720,53 @@ class ToolExecutor:
 
                 ]
 
+                # -------------------------------------------------
+
+                # Phase 6:
+
+                # Atomic-style commit
+
+                #
+
+                # State is modified only after all validation and
+
+                # object construction have succeeded.
+
+                # -------------------------------------------------
+
+                self.research_state.evidence.extend(
+
+                    new_evidence
+
+                )
+
+                self.research_state.findings.extend(
+
+                    new_findings
+
+                )
+
+                self.research_state.gaps = (
+
+                    remaining_gaps
+
+                    + new_gaps
+
+                )
+
+                self.research_state.gap_research_questions.extend(
+
+                    new_gap_research_questions
+
+                )
+
                 result = self.research_state
+
+            # =====================================================
+
+            # Unknown tool
+
+            # =====================================================
 
             else:
 
@@ -276,6 +780,12 @@ class ToolExecutor:
 
                 )
 
+            # =====================================================
+
+            # Successful execution
+
+            # =====================================================
+
             return ToolExecutionResult(
 
                 success=True,
@@ -285,6 +795,12 @@ class ToolExecutor:
                 data=result
 
             )
+
+        # =========================================================
+
+        # Pydantic argument validation errors
+
+        # =========================================================
 
         except ValidationError as error:
 
@@ -297,6 +813,12 @@ class ToolExecutor:
                 error=f"Invalid tool arguments: {error}"
 
             )
+
+        # =========================================================
+
+        # Unexpected execution errors
+
+        # =========================================================
 
         except Exception as error:
 

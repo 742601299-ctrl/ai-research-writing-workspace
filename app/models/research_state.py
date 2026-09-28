@@ -26,6 +26,20 @@ class ResearchGap(BaseModel):
 
     description: str
 
+    supporting_finding_ids: list[str]
+
+class GapResearchQuestion(BaseModel):
+
+    question_id: str = Field(
+
+        default_factory=lambda: str(uuid4())
+
+    )
+
+    question: str
+
+    gap_ids: list[str]
+
 class ResearchState(BaseModel):
 
     evidence: list[TraceableEvidence] = Field(
@@ -41,6 +55,12 @@ class ResearchState(BaseModel):
     )
 
     gaps: list[ResearchGap] = Field(
+
+        default_factory=list
+
+    )
+
+    gap_research_questions: list[GapResearchQuestion] = Field(
 
         default_factory=list
 

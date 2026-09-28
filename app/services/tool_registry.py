@@ -112,31 +112,55 @@ class ToolRegistry:
 
                     "support for a finding. "
 
-                    "Add a gap only when missing information or evidence materially "
+                    "Add a research gap only when it emerges from synthesis of the "
 
-                    "weakens the ability to answer the user's current research goal. "
+                    "current evidence and findings at the topic level. "
 
-                    "Do not create gaps merely because a source mentions unanswered "
+                    "A limitation or future-work statement from a single source is "
 
-                    "questions, interesting adjacent topics, or information that "
+                    "not automatically a research gap. "
 
-                    "could optionally be explored. "
+                    "Every new research gap must include supporting_finding_ids that "
 
-                    "Keep all findings and gaps tightly scoped to the user's research "
+                    "identify one or more existing findings that support the gap. "
 
-                    "goal. "
+                    "Prefer multiple relevant findings when the literature supports "
 
-                    "Resolve an existing gap when newly obtained evidence sufficiently "
+                    "them, but do not invent additional support. "
 
-                    "addresses it. "
+                    "Frame gaps relative to the literature reviewed in the current "
+
+                    "research process rather than making unsupported claims that no "
+
+                    "research exists. "
+
+                    "After a research gap has been created and its real gap_id is "
+
+                    "available in the research state, you may formulate a "
+
+                    "gap_research_question that investigates that gap. "
+
+                    "Every new gap research question must include gap_ids that "
+
+                    "reference one or more existing research gaps. "
+
+                    "Do not invent finding IDs or gap IDs. "
+
+                    "Keep findings, gaps, and gap research questions tightly scoped "
+
+                    "to the user's research goal. "
+
+                    "Resolve an existing gap only when later evidence shows that the "
+
+                    "current research state no longer supports treating it as a gap. "
 
                     "A remaining gap does not automatically require further searching; "
 
-                    "if the available evidence is already sufficient to answer the "
+                    "if the available evidence is already sufficient for the user's "
 
-                    "user's research request, the research may stop and the remaining "
+                    "request, the research may stop and the limitation can be "
 
-                    "limitation can be explained in the final answer."
+                    "explained in the final answer."
 
                 ),
 

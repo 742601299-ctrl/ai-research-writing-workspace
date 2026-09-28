@@ -276,7 +276,333 @@ assert len(research_state.findings) == (
 
 )
 
-print("\n=== Test 5: get_source ===")
+print("\n=== Test 5: atomic state update rejection ===")
+
+atomic_previous_evidence_count = len(
+
+    research_state.evidence
+
+)
+
+atomic_previous_finding_count = len(
+
+    research_state.findings
+
+)
+
+atomic_previous_gap_count = len(
+
+    research_state.gaps
+
+)
+
+atomic_previous_question_count = len(
+
+    research_state.gap_research_questions
+
+)
+
+atomic_result = tool_executor.execute(
+
+    tool_name="update_research_state",
+
+    arguments={
+
+        "new_findings": [
+
+            {
+
+                "claim": (
+
+                    "This finding is valid and should not be "
+
+                    "committed if another finding is invalid."
+
+                ),
+
+                "supporting_chunk_ids": [
+
+                    retrieved_chunk_id
+
+                ]
+
+            },
+
+            {
+
+                "claim": (
+
+                    "This finding contains an invalid chunk."
+
+                ),
+
+                "supporting_chunk_ids": [
+
+                    "fake-atomic-chunk-id"
+
+                ]
+
+            }
+
+        ]
+
+    }
+
+)
+
+print("Success:", atomic_result.success)
+
+print("Tool:", atomic_result.tool_name)
+
+print("Error:", atomic_result.error)
+
+assert atomic_result.success is False
+
+assert len(research_state.evidence) == (
+
+    atomic_previous_evidence_count
+
+)
+
+assert len(research_state.findings) == (
+
+    atomic_previous_finding_count
+
+)
+
+assert len(research_state.gaps) == (
+
+    atomic_previous_gap_count
+
+)
+
+assert len(
+
+    research_state.gap_research_questions
+
+) == atomic_previous_question_count
+
+print("\n=== Test 6: evidence-backed research gap ===")
+
+finding_id = research_state.findings[0].finding_id
+
+gap_result = tool_executor.execute(
+
+    tool_name="update_research_state",
+
+    arguments={
+
+        "new_gaps": [
+
+            {
+
+                "description": (
+
+                    "Test research gap grounded "
+
+                    "in an existing finding."
+
+                ),
+
+                "supporting_finding_ids": [
+
+                    finding_id
+
+                ]
+
+            }
+
+        ]
+
+    }
+
+)
+
+print("Success:", gap_result.success)
+
+print("Tool:", gap_result.tool_name)
+
+print("Error:", gap_result.error)
+
+assert gap_result.success is True
+
+assert len(research_state.gaps) == 1
+
+gap = research_state.gaps[0]
+
+assert gap.supporting_finding_ids == [
+
+    finding_id
+
+]
+
+print("\n=== Test 7: nonexistent finding rejection ===")
+
+previous_gap_count = len(
+
+    research_state.gaps
+
+)
+
+invalid_gap_result = tool_executor.execute(
+
+    tool_name="update_research_state",
+
+    arguments={
+
+        "new_gaps": [
+
+            {
+
+                "description": (
+
+                    "This gap references a finding "
+
+                    "that does not exist."
+
+                ),
+
+                "supporting_finding_ids": [
+
+                    "fake-finding-id"
+
+                ]
+
+            }
+
+        ]
+
+    }
+
+)
+
+print("Success:", invalid_gap_result.success)
+
+print("Tool:", invalid_gap_result.tool_name)
+
+print("Error:", invalid_gap_result.error)
+
+assert invalid_gap_result.success is False
+
+assert len(research_state.gaps) == (
+
+    previous_gap_count
+
+)
+
+print("\n=== Test 8: gap-backed research question ===")
+
+gap_id = research_state.gaps[0].gap_id
+
+question_result = tool_executor.execute(
+
+    tool_name="update_research_state",
+
+    arguments={
+
+        "new_gap_research_questions": [
+
+            {
+
+                "question": (
+
+                    "What research direction could address "
+
+                    "the identified research gap?"
+
+                ),
+
+                "gap_ids": [
+
+                    gap_id
+
+                ]
+
+            }
+
+        ]
+
+    }
+
+)
+
+print("Success:", question_result.success)
+
+print("Tool:", question_result.tool_name)
+
+print("Error:", question_result.error)
+
+assert question_result.success is True
+
+assert len(
+
+    research_state.gap_research_questions
+
+) == 1
+
+question = research_state.gap_research_questions[0]
+
+assert question.gap_ids == [
+
+    gap_id
+
+]
+
+print("\n=== Test 9: nonexistent gap rejection ===")
+
+previous_question_count = len(
+
+    research_state.gap_research_questions
+
+)
+
+invalid_question_result = tool_executor.execute(
+
+    tool_name="update_research_state",
+
+    arguments={
+
+        "new_gap_research_questions": [
+
+            {
+
+                "question": (
+
+                    "This question references a gap "
+
+                    "that does not exist."
+
+                ),
+
+                "gap_ids": [
+
+                    "fake-gap-id"
+
+                ]
+
+            }
+
+        ]
+
+    }
+
+)
+
+print("Success:", invalid_question_result.success)
+
+print("Tool:", invalid_question_result.tool_name)
+
+print("Error:", invalid_question_result.error)
+
+assert invalid_question_result.success is False
+
+assert len(
+
+    research_state.gap_research_questions
+
+) == previous_question_count
+
+print("\n=== Test 10: get_source ===")
 
 source_id = search_result.data[0].source_id
 
@@ -304,7 +630,7 @@ assert source_result.data is not None
 
 assert source_result.data.source_id == source_id
 
-print("\n=== Test 6: invalid arguments ===")
+print("\n=== Test 11: invalid arguments ===")
 
 invalid_result = tool_executor.execute(
 
@@ -328,7 +654,7 @@ assert invalid_result.success is False
 
 assert invalid_result.error is not None
 
-print("\n=== Test 7: unknown tool ===")
+print("\n=== Test 12: unknown tool ===")
 
 unknown_result = tool_executor.execute(
 
@@ -352,6 +678,118 @@ assert unknown_result.error == (
 
 )
 
+print("\n=== Test 13: atomic mixed state update rejection ===")
+
+mixed_previous_evidence_count = len(
+
+    research_state.evidence
+
+)
+
+mixed_previous_finding_count = len(
+
+    research_state.findings
+
+)
+
+mixed_previous_gap_count = len(
+
+    research_state.gaps
+
+)
+
+mixed_previous_question_count = len(
+
+    research_state.gap_research_questions
+
+)
+
+mixed_result = tool_executor.execute(
+
+    tool_name="update_research_state",
+
+    arguments={
+
+        "new_findings": [
+
+            {
+
+                "claim": (
+
+                    "This valid finding must not be committed "
+
+                    "when a later gap is invalid."
+
+                ),
+
+                "supporting_chunk_ids": [
+
+                    retrieved_chunk_id
+
+                ]
+
+            }
+
+        ],
+
+        "new_gaps": [
+
+            {
+
+                "description": (
+
+                    "This invalid gap references a finding "
+
+                    "that does not exist."
+
+                ),
+
+                "supporting_finding_ids": [
+
+                    "fake-mixed-finding-id"
+
+                ]
+
+            }
+
+        ]
+
+    }
+
+)
+
+print("Success:", mixed_result.success)
+
+print("Tool:", mixed_result.tool_name)
+
+print("Error:", mixed_result.error)
+
+assert mixed_result.success is False
+
+assert len(research_state.evidence) == (
+
+    mixed_previous_evidence_count
+
+)
+
+assert len(research_state.findings) == (
+
+    mixed_previous_finding_count
+
+)
+
+assert len(research_state.gaps) == (
+
+    mixed_previous_gap_count
+
+)
+
+assert len(
+
+    research_state.gap_research_questions
+
+) == mixed_previous_question_count
+
 print("\n=== ToolExecutor Integration Check ===")
 
 print("search_web dispatch -> PASS")
@@ -363,6 +801,18 @@ print("retrieved chunk registry -> PASS")
 print("evidence-backed finding -> PASS")
 
 print("unretrieved chunk rejection -> PASS")
+
+print("atomic state update rejection -> PASS")
+
+print("atomic mixed state update rejection -> PASS")
+
+print("evidence-backed research gap -> PASS")
+
+print("nonexistent finding rejection -> PASS")
+
+print("gap-backed research question -> PASS")
+
+print("nonexistent gap rejection -> PASS")
 
 print("get_source dispatch -> PASS")
 
