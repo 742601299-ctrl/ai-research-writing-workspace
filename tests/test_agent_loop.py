@@ -10,6 +10,10 @@ from app.models.research_state import ResearchState
 
 from app.prompts.research_agent import RESEARCH_AGENT_INSTRUCTIONS
 
+from app.services.citation_formatter import CitationFormatter
+
+from app.services.citation_resolver import CitationResolver
+
 from app.services.embedding_service import EmbeddingService
 
 from app.services.in_memory_vector_store import InMemoryVectorStore
@@ -32,6 +36,12 @@ from app.tools.web_search import WebSearchTool
 
 load_dotenv()
 
+# =========================================================
+
+# Configuration
+
+# =========================================================
+
 MODEL_NAME = "gpt-5-mini"
 
 RESEARCH_QUERY = (
@@ -53,6 +63,12 @@ MAX_SEARCHES = 8
 MAX_RETRIEVALS = 12
 
 MAX_CONSECUTIVE_UPDATE_FAILURES = 2
+
+# =========================================================
+
+# Research Agent Runtime Instructions
+
+# =========================================================
 
 RUNTIME_INSTRUCTIONS = """
 
@@ -132,7 +148,9 @@ failed call.
 
 A supporting_chunk_id must come from retrieved_chunk_ids.
 
-A supporting_finding_id must come from research_state.findings[*].finding_id.
+A supporting_finding_id must come from
+
+research_state.findings[*].finding_id.
 
 A gap_id must come from research_state.gaps[*].gap_id.
 
@@ -152,15 +170,15 @@ If update_research_state fails:
 
   update.
 
-A failed state update means the proposed state transition was invalid. It does
+A failed state update means the proposed state transition was invalid.
 
-not automatically mean more literature must be retrieved.
+It does not automatically mean more literature must be retrieved.
 
 If the latest observation says state updates are temporarily blocked, do not
 
-call update_research_state again. Continue with retrieval, synthesis, or the
+call update_research_state again.
 
-final answer.
+Continue with retrieval, synthesis, or the final answer.
 
 5. Retrieval rules
 
@@ -170,7 +188,9 @@ Use a short but meaningful query describing the evidence you need.
 
 Use source_ids only when you intentionally want to restrict retrieval to those
 
-sources. Otherwise omit source_ids or use null.
+sources.
+
+Otherwise omit source_ids or use null.
 
 Do not repeatedly retrieve the same query from the same sources unless the
 
@@ -219,6 +239,82 @@ AGENT_INSTRUCTIONS = (
     + RUNTIME_INSTRUCTIONS
 
 )
+
+# =========================================================
+
+# Final Citation-Aware Synthesis Instructions
+
+# =========================================================
+
+FINAL_SYNTHESIS_INSTRUCTIONS = """
+
+You are the final research synthesis layer.
+
+You are NOT performing additional research.
+
+You must write the final answer using only the verified research state and
+
+citation context supplied to you.
+
+STRICT RULES:
+
+1. Do not introduce factual claims that are not supported by the supplied
+
+   findings.
+
+2. Preserve citation markers exactly as supplied, such as [1], [2], or
+
+   [1][2].
+
+3. Never invent a citation number.
+
+4. Never cite a source that is not present in the supplied SOURCES section.
+
+5. Do not claim that a source proves something beyond what the supplied
+
+   finding says.
+
+6. Clearly distinguish:
+
+   - current approaches,
+
+   - practical limitations,
+
+   - the evidence-grounded research gap,
+
+   - research questions.
+
+7. Research gaps must be based on the supplied research state.
+
+8. Research questions must be based on the supplied gap-derived research
+
+   questions.
+
+9. Do not perform new web searches, literature retrieval, or state updates.
+
+10. Include a SOURCES section at the end.
+
+11. Use the source numbering already present in the citation context.
+
+12. Do not create new source numbers.
+
+13. If evidence is insufficient for a claim, omit the claim rather than
+
+    guessing.
+
+The purpose of this stage is to transform verified research state into a
+
+clear, readable, citation-aware research answer without breaking evidence
+
+traceability.
+
+"""
+
+# =========================================================
+
+# Core Services
+
+# =========================================================
 
 client = OpenAI(
 
@@ -282,6 +378,34 @@ tool_executor = ToolExecutor(
 
 tool_registry = ToolRegistry()
 
+# =========================================================
+
+# Citation Pipeline
+
+# =========================================================
+
+citation_resolver = CitationResolver(
+
+    research_state=research_state,
+
+    workspace=workspace
+
+)
+
+citation_formatter = CitationFormatter(
+
+    citation_resolver=citation_resolver,
+
+    research_state=research_state
+
+)
+
+# =========================================================
+
+# Runtime State
+
+# =========================================================
+
 research_progress = {
 
     "iteration_count": 0,
@@ -297,6 +421,82 @@ retrieved_chunk_ids = set()
 consecutive_update_failures = 0
 
 state_updates_blocked = False
+
+# =========================================================
+
+# Helper Functions
+
+# =========================================================
+
+def get_recommended_next_state_action():
+
+    if state_updates_blocked:
+
+        return (
+
+            "Do not call update_research_state again in this run. "
+
+            "Use the retrieved evidence directly for synthesis and "
+
+            "produce the final answer when sufficient."
+
+        )
+
+    if not research_state.findings:
+
+        if retrieved_chunk_ids:
+
+            return (
+
+                "Create findings only. Use supporting_chunk_ids copied "
+
+                "exactly from retrieved_chunk_ids. Do not create gaps or "
+
+                "questions in the same call."
+
+            )
+
+        return (
+
+            "Retrieve relevant literature before creating findings."
+
+        )
+
+    if not research_state.gaps:
+
+        return (
+
+            "Create a research gap only. Use supporting_finding_ids "
+
+            "copied exactly from "
+
+            "research_state.findings[*].finding_id. Do not create gap "
+
+            "research questions in the same call."
+
+        )
+
+    if not research_state.gap_research_questions:
+
+        return (
+
+            "Create gap-derived research questions only. Use gap_ids "
+
+            "copied exactly from research_state.gaps[*].gap_id."
+
+        )
+
+    return (
+
+        "The semantic state already contains findings, a gap, and "
+
+        "research questions. Prefer producing the final answer unless "
+
+        "a specific evidence gap still prevents answering the user's "
+
+        "request."
+
+    )
 
 def build_research_state_snapshot():
 
@@ -342,7 +542,9 @@ def build_research_state_snapshot():
 
                 "description": gap.description,
 
-                "supporting_finding_ids": gap.supporting_finding_ids
+                "supporting_finding_ids":
+
+                    gap.supporting_finding_ids
 
             }
 
@@ -362,7 +564,9 @@ def build_research_state_snapshot():
 
             }
 
-            for question in research_state.gap_research_questions
+            for question
+
+            in research_state.gap_research_questions
 
         ],
 
@@ -386,91 +590,27 @@ def build_research_state_snapshot():
 
             "question_support": (
 
-                "A gap research question must reference exact gap_id values "
+                "A gap research question must reference exact gap_id "
 
-                "that already exist in gaps."
+                "values that already exist in gaps."
 
             ),
 
             "important": (
 
-                "Never invent, shorten, transform, or guess IDs. Copy them "
+                "Never invent, shorten, transform, or guess IDs. "
 
-                "exactly from this observation."
+                "Copy them exactly from this observation."
 
             )
 
         },
 
-        "recommended_next_state_action": get_recommended_next_state_action()
+        "recommended_next_state_action":
+
+            get_recommended_next_state_action()
 
     }
-
-def get_recommended_next_state_action():
-
-    if state_updates_blocked:
-
-        return (
-
-            "Do not call update_research_state again in this run. Use the "
-
-            "retrieved evidence directly for synthesis and produce the final "
-
-            "answer when sufficient."
-
-        )
-
-    if not research_state.findings:
-
-        if retrieved_chunk_ids:
-
-            return (
-
-                "Create findings only. Use supporting_chunk_ids copied "
-
-                "exactly from retrieved_chunk_ids. Do not create gaps or "
-
-                "questions in the same call."
-
-            )
-
-        return (
-
-            "Retrieve relevant literature before creating findings."
-
-        )
-
-    if not research_state.gaps:
-
-        return (
-
-            "Create a research gap only. Use supporting_finding_ids copied "
-
-            "exactly from research_state.findings[*].finding_id. Do not "
-
-            "create gap research questions in the same call."
-
-        )
-
-    if not research_state.gap_research_questions:
-
-        return (
-
-            "Create gap-derived research questions only. Use gap_ids copied "
-
-            "exactly from research_state.gaps[*].gap_id."
-
-        )
-
-    return (
-
-        "The semantic state already contains findings, a gap, and research "
-
-        "questions. Prefer producing the final answer unless a specific "
-
-        "evidence gap still prevents answering the user's request."
-
-    )
 
 def build_common_context():
 
@@ -482,11 +622,11 @@ def build_common_context():
 
             "message": (
 
-                "Sources in the workspace are indexed and available through "
+                "Sources in the workspace are indexed and available "
 
-                "retrieve_literature. Workspace presence alone does not mean "
+                "through retrieve_literature. Workspace presence alone "
 
-                "their contents have been examined."
+                "does not mean their contents have been examined."
 
             )
 
@@ -498,31 +638,47 @@ def build_common_context():
 
             "message": (
 
-                "These counts describe actions already taken. They are not "
+                "These counts describe actions already taken. They are "
 
-                "research goals. Prefer existing evidence over increasing "
+                "not research goals. Prefer existing evidence over "
 
-                "search or retrieval counts."
+                "increasing search or retrieval counts."
 
             )
 
         },
 
-        "retrieved_chunk_ids": sorted(retrieved_chunk_ids),
+        "retrieved_chunk_ids": sorted(
 
-        "research_state": build_research_state_snapshot(),
+            retrieved_chunk_ids
+
+        ),
+
+        "research_state":
+
+            build_research_state_snapshot(),
 
         "state_update_control": {
 
-            "consecutive_update_failures": consecutive_update_failures,
+            "consecutive_update_failures":
 
-            "updates_blocked": state_updates_blocked
+                consecutive_update_failures,
+
+            "updates_blocked":
+
+                state_updates_blocked
 
         }
 
     }
 
-def make_guard_observation(tool_name, error_message):
+def make_guard_observation(
+
+    tool_name,
+
+    error_message
+
+):
 
     return json.dumps(
 
@@ -550,13 +706,27 @@ def collect_retrieved_chunk_ids(value):
 
         for key, nested_value in value.items():
 
-            if key == "chunk_id" and isinstance(nested_value, str):
+            if (
 
-                retrieved_chunk_ids.add(nested_value)
+                key == "chunk_id"
+
+                and isinstance(nested_value, str)
+
+            ):
+
+                retrieved_chunk_ids.add(
+
+                    nested_value
+
+                )
 
             else:
 
-                collect_retrieved_chunk_ids(nested_value)
+                collect_retrieved_chunk_ids(
+
+                    nested_value
+
+                )
 
         return
 
@@ -564,13 +734,29 @@ def collect_retrieved_chunk_ids(value):
 
         for nested_value in value:
 
-            collect_retrieved_chunk_ids(nested_value)
+            collect_retrieved_chunk_ids(
+
+                nested_value
+
+            )
 
 def print_debug(execution_result):
 
-    print("Execution Success:", execution_result.success)
+    print(
 
-    print("Execution Error:", execution_result.error)
+        "Execution Success:",
+
+        execution_result.success
+
+    )
+
+    print(
+
+        "Execution Error:",
+
+        execution_result.error
+
+    )
 
     print(
 
@@ -624,7 +810,11 @@ def print_debug(execution_result):
 
         "Gap Research Questions:",
 
-        len(research_state.gap_research_questions)
+        len(
+
+            research_state.gap_research_questions
+
+        )
 
     )
 
@@ -644,7 +834,147 @@ def print_debug(execution_result):
 
     )
 
-print("\n=== Round 1: LLM Decision ===")
+def build_final_synthesis_input(
+
+    citation_context
+
+):
+
+    research_snapshot = {
+
+        "gaps": [
+
+            {
+
+                "gap_id": gap.gap_id,
+
+                "description": gap.description,
+
+                "supporting_finding_ids":
+
+                    gap.supporting_finding_ids
+
+            }
+
+            for gap in research_state.gaps
+
+        ],
+
+        "gap_research_questions": [
+
+            {
+
+                "question_id": question.question_id,
+
+                "question": question.question,
+
+                "gap_ids": question.gap_ids
+
+            }
+
+            for question
+
+            in research_state.gap_research_questions
+
+        ]
+
+    }
+
+    return (
+
+        "ORIGINAL RESEARCH REQUEST:\n\n"
+
+        f"{RESEARCH_QUERY}\n\n"
+
+        "VERIFIED CITATION CONTEXT:\n\n"
+
+        f"{citation_context}\n\n"
+
+        "VERIFIED RESEARCH GAP AND QUESTIONS:\n\n"
+
+        f"{json.dumps(research_snapshot, ensure_ascii=False, indent=2)}\n\n"
+
+        "Write the final research answer using only the verified "
+
+        "information above."
+
+    )
+
+def run_final_citation_synthesis():
+
+    if not research_state.findings:
+
+        print(
+
+            "\nCitation-aware synthesis skipped: "
+
+            "no validated findings exist."
+
+        )
+
+        return
+
+    citation_context = (
+
+        citation_formatter.build_context()
+
+    )
+
+    print(
+
+        "\n=== Citation Context ==="
+
+    )
+
+    print(
+
+        citation_context
+
+    )
+
+    synthesis_input = (
+
+        build_final_synthesis_input(
+
+            citation_context
+
+        )
+
+    )
+
+    synthesis_response = client.responses.create(
+
+        model=MODEL_NAME,
+
+        instructions=FINAL_SYNTHESIS_INSTRUCTIONS,
+
+        input=synthesis_input
+
+    )
+
+    print(
+
+        "\n=== Final Citation-Aware Answer ==="
+
+    )
+
+    print(
+
+        synthesis_response.output_text
+
+    )
+
+# =========================================================
+
+# Initial Agent Decision
+
+# =========================================================
+
+print(
+
+    "\n=== Round 1: LLM Decision ==="
+
+)
 
 response = client.responses.create(
 
@@ -660,13 +990,25 @@ response = client.responses.create(
 
 )
 
+# =========================================================
+
+# Agent Loop
+
+# =========================================================
+
 for iteration in range(MAX_ITERATIONS):
 
-    research_progress["iteration_count"] = iteration + 1
+    research_progress[
+
+        "iteration_count"
+
+    ] = iteration + 1
 
     print(
 
-        f"\n=== Agent Iteration {iteration + 1} ==="
+        f"\n=== Agent Iteration "
+
+        f"{iteration + 1} ==="
 
     )
 
@@ -680,11 +1022,27 @@ for iteration in range(MAX_ITERATIONS):
 
     ]
 
+    # -----------------------------------------------------
+
+    # Agent has finished research
+
+    # -----------------------------------------------------
+
     if not function_calls:
 
-        print("\n=== Final Answer ===")
+        print(
 
-        print(response.output_text)
+            "\n=== Agent Research Answer ==="
+
+        )
+
+        print(
+
+            response.output_text
+
+        )
+
+        run_final_citation_synthesis()
 
         break
 
@@ -692,37 +1050,59 @@ for iteration in range(MAX_ITERATIONS):
 
     for item in function_calls:
 
-        print("Tool:", item.name)
+        print(
 
-        print("Arguments:", item.arguments)
+            "Tool:",
 
-        # -------------------------------------------------
+            item.name
 
-        # Search budget guard
+        )
 
-        # -------------------------------------------------
+        print(
+
+            "Arguments:",
+
+            item.arguments
+
+        )
+
+        # =================================================
+
+        # Search Budget Guard
+
+        # =================================================
 
         if (
 
             item.name == "search_web"
 
-            and research_progress["search_count"] >= MAX_SEARCHES
+            and research_progress["search_count"]
+
+            >= MAX_SEARCHES
 
         ):
 
-            observation = make_guard_observation(
+            observation = (
 
-                item.name,
+                make_guard_observation(
 
-                (
+                    item.name,
 
-                    "Search budget exhausted. Do not search again. Use the "
+                    (
 
-                    "sources already in the workspace, retrieve relevant "
+                        "Search budget exhausted. "
 
-                    "literature if necessary, update the semantic research "
+                        "Do not search again. "
 
-                    "state if valid, or produce the final answer."
+                        "Use the sources already in the workspace, "
+
+                        "retrieve relevant literature if necessary, "
+
+                        "update the semantic research state if valid, "
+
+                        "or produce the final answer."
+
+                    )
 
                 )
 
@@ -748,11 +1128,17 @@ for iteration in range(MAX_ITERATIONS):
 
                 {
 
-                    "type": "function_call_output",
+                    "type":
 
-                    "call_id": item.call_id,
+                        "function_call_output",
 
-                    "output": observation
+                    "call_id":
+
+                        item.call_id,
+
+                    "output":
+
+                        observation
 
                 }
 
@@ -760,33 +1146,41 @@ for iteration in range(MAX_ITERATIONS):
 
             continue
 
-        # -------------------------------------------------
+        # =================================================
 
-        # Retrieval budget guard
+        # Retrieval Budget Guard
 
-        # -------------------------------------------------
+        # =================================================
 
         if (
 
             item.name == "retrieve_literature"
 
-            and research_progress["retrieval_count"] >= MAX_RETRIEVALS
+            and research_progress["retrieval_count"]
+
+            >= MAX_RETRIEVALS
 
         ):
 
-            observation = make_guard_observation(
+            observation = (
 
-                item.name,
+                make_guard_observation(
 
-                (
+                    item.name,
 
-                    "Retrieval budget exhausted. Do not retrieve again. "
+                    (
 
-                    "Synthesize the evidence already retrieved, update the "
+                        "Retrieval budget exhausted. "
 
-                    "semantic research state if valid, or produce the final "
+                        "Do not retrieve again. "
 
-                    "answer."
+                        "Synthesize the evidence already retrieved, "
+
+                        "update the semantic research state if valid, "
+
+                        "or produce the final answer."
+
+                    )
 
                 )
 
@@ -812,11 +1206,17 @@ for iteration in range(MAX_ITERATIONS):
 
                 {
 
-                    "type": "function_call_output",
+                    "type":
 
-                    "call_id": item.call_id,
+                        "function_call_output",
 
-                    "output": observation
+                    "call_id":
+
+                        item.call_id,
+
+                    "output":
+
+                        observation
 
                 }
 
@@ -824,11 +1224,11 @@ for iteration in range(MAX_ITERATIONS):
 
             continue
 
-        # -------------------------------------------------
+        # =================================================
 
-        # State update failure guard
+        # State Update Failure Guard
 
-        # -------------------------------------------------
+        # =================================================
 
         if (
 
@@ -838,21 +1238,29 @@ for iteration in range(MAX_ITERATIONS):
 
         ):
 
-            observation = make_guard_observation(
+            observation = (
 
-                item.name,
+                make_guard_observation(
 
-                (
+                    item.name,
 
-                    "State updates are blocked for the remainder of this run "
+                    (
 
-                    "because repeated update_research_state validation "
+                        "State updates are blocked for the remainder "
 
-                    "failures occurred. Do not call update_research_state "
+                        "of this run because repeated "
 
-                    "again. Use the retrieved evidence directly and produce "
+                        "update_research_state validation failures "
 
-                    "the final answer when sufficient."
+                        "occurred. Do not call "
+
+                        "update_research_state again. Use the "
+
+                        "retrieved evidence directly and produce the "
+
+                        "final answer when sufficient."
+
+                    )
 
                 )
 
@@ -878,11 +1286,17 @@ for iteration in range(MAX_ITERATIONS):
 
                 {
 
-                    "type": "function_call_output",
+                    "type":
 
-                    "call_id": item.call_id,
+                        "function_call_output",
 
-                    "output": observation
+                    "call_id":
+
+                        item.call_id,
+
+                    "output":
+
+                        observation
 
                 }
 
@@ -890,11 +1304,11 @@ for iteration in range(MAX_ITERATIONS):
 
             continue
 
-        # -------------------------------------------------
+        # =================================================
 
-        # Parse tool arguments
+        # Parse Tool Arguments
 
-        # -------------------------------------------------
+        # =================================================
 
         try:
 
@@ -906,11 +1320,21 @@ for iteration in range(MAX_ITERATIONS):
 
         except json.JSONDecodeError as error:
 
-            observation = make_guard_observation(
+            observation = (
 
-                item.name,
+                make_guard_observation(
 
-                f"Invalid JSON arguments: {error}"
+                    item.name,
+
+                    (
+
+                        "Invalid JSON arguments: "
+
+                        f"{error}"
+
+                    )
+
+                )
 
             )
 
@@ -934,11 +1358,17 @@ for iteration in range(MAX_ITERATIONS):
 
                 {
 
-                    "type": "function_call_output",
+                    "type":
 
-                    "call_id": item.call_id,
+                        "function_call_output",
 
-                    "output": observation
+                    "call_id":
+
+                        item.call_id,
+
+                    "output":
+
+                        observation
 
                 }
 
@@ -946,15 +1376,19 @@ for iteration in range(MAX_ITERATIONS):
 
             continue
 
-        # -------------------------------------------------
+        # =================================================
 
-        # Empty retrieval query guard
+        # Empty Retrieval Query Guard
 
-        # -------------------------------------------------
+        # =================================================
 
         if item.name == "retrieve_literature":
 
-            query = arguments.get("query")
+            query = arguments.get(
+
+                "query"
+
+            )
 
             if (
 
@@ -964,17 +1398,23 @@ for iteration in range(MAX_ITERATIONS):
 
             ):
 
-                observation = make_guard_observation(
+                observation = (
 
-                    item.name,
+                    make_guard_observation(
 
-                    (
+                        item.name,
 
-                        "retrieve_literature requires a non-empty query. "
+                        (
 
-                        "Choose a short meaningful query describing the "
+                            "retrieve_literature requires a "
 
-                        "evidence needed and try again."
+                            "non-empty query. Choose a short "
+
+                            "meaningful query describing the "
+
+                            "evidence needed and try again."
+
+                        )
 
                     )
 
@@ -1000,11 +1440,17 @@ for iteration in range(MAX_ITERATIONS):
 
                     {
 
-                        "type": "function_call_output",
+                        "type":
 
-                        "call_id": item.call_id,
+                            "function_call_output",
 
-                        "output": observation
+                        "call_id":
+
+                            item.call_id,
+
+                        "output":
+
+                            observation
 
                     }
 
@@ -1012,27 +1458,35 @@ for iteration in range(MAX_ITERATIONS):
 
                 continue
 
-            arguments["query"] = query.strip()
+            arguments["query"] = (
 
-        # -------------------------------------------------
+                query.strip()
 
-        # Execute tool
+            )
 
-        # -------------------------------------------------
+        # =================================================
 
-        execution_result = tool_executor.execute(
+        # Execute Tool
 
-            tool_name=item.name,
+        # =================================================
 
-            arguments=arguments
+        execution_result = (
+
+            tool_executor.execute(
+
+                tool_name=item.name,
+
+                arguments=arguments
+
+            )
 
         )
 
-        # -------------------------------------------------
+        # =================================================
 
-        # Update progress counters
+        # Update Progress Counters
 
-        # -------------------------------------------------
+        # =================================================
 
         if execution_result.success:
 
@@ -1044,7 +1498,13 @@ for iteration in range(MAX_ITERATIONS):
 
                 ] += 1
 
-            elif item.name == "retrieve_literature":
+            elif (
+
+                item.name
+
+                == "retrieve_literature"
+
+            ):
 
                 research_progress[
 
@@ -1052,11 +1512,11 @@ for iteration in range(MAX_ITERATIONS):
 
                 ] += 1
 
-        # -------------------------------------------------
+        # =================================================
 
-        # Parse tool observation
+        # Parse Tool Observation
 
-        # -------------------------------------------------
+        # =================================================
 
         observation_data = json.loads(
 
@@ -1064,15 +1524,17 @@ for iteration in range(MAX_ITERATIONS):
 
         )
 
-        # -------------------------------------------------
+        # =================================================
 
-        # Record real retrieved chunk IDs
+        # Record Retrieved Chunk IDs
 
-        # -------------------------------------------------
+        # =================================================
 
         if (
 
-            item.name == "retrieve_literature"
+            item.name
+
+            == "retrieve_literature"
 
             and execution_result.success
 
@@ -1080,17 +1542,27 @@ for iteration in range(MAX_ITERATIONS):
 
             collect_retrieved_chunk_ids(
 
-                observation_data.get("data")
+                observation_data.get(
+
+                    "data"
+
+                )
 
             )
 
-        # -------------------------------------------------
+        # =================================================
 
-        # Track update_research_state failures
+        # Track State Update Failures
 
-        # -------------------------------------------------
+        # =================================================
 
-        if item.name == "update_research_state":
+        if (
+
+            item.name
+
+            == "update_research_state"
+
+        ):
 
             if execution_result.success:
 
@@ -1104,17 +1576,19 @@ for iteration in range(MAX_ITERATIONS):
 
                     consecutive_update_failures
 
-                    >= MAX_CONSECUTIVE_UPDATE_FAILURES
+                    >=
+
+                    MAX_CONSECUTIVE_UPDATE_FAILURES
 
                 ):
 
                     state_updates_blocked = True
 
-        # -------------------------------------------------
+        # =================================================
 
-        # Attach workspace / state context
+        # Attach Runtime Context
 
-        # -------------------------------------------------
+        # =================================================
 
         observation_data.update(
 
@@ -1124,7 +1598,9 @@ for iteration in range(MAX_ITERATIONS):
 
         if (
 
-            item.name == "update_research_state"
+            item.name
+
+            == "update_research_state"
 
             and not execution_result.success
 
@@ -1136,15 +1612,21 @@ for iteration in range(MAX_ITERATIONS):
 
             ] = (
 
-                "Do not repeat the same failed state update. Use only exact "
+                "Do not repeat the same failed state update. "
 
-                "IDs shown in retrieved_chunk_ids, research_state.findings, "
+                "Use only exact IDs shown in "
 
-                "and research_state.gaps. If state updates are blocked, "
+                "retrieved_chunk_ids, "
 
-                "continue research or answer directly without another state "
+                "research_state.findings, and "
 
-                "update."
+                "research_state.gaps. "
+
+                "If state updates are blocked, continue "
+
+                "research or answer directly without another "
+
+                "state update."
 
             )
 
@@ -1156,11 +1638,11 @@ for iteration in range(MAX_ITERATIONS):
 
         )
 
-        # -------------------------------------------------
+        # =================================================
 
-        # Debug output
+        # Debug Output
 
-        # -------------------------------------------------
+        # =================================================
 
         print_debug(
 
@@ -1172,21 +1654,27 @@ for iteration in range(MAX_ITERATIONS):
 
             {
 
-                "type": "function_call_output",
+                "type":
 
-                "call_id": item.call_id,
+                    "function_call_output",
 
-                "output": observation
+                "call_id":
+
+                    item.call_id,
+
+                "output":
+
+                    observation
 
             }
 
         )
 
-    # -----------------------------------------------------
+    # =====================================================
 
-    # Continue agent reasoning
+    # Continue Agent Reasoning
 
-    # -----------------------------------------------------
+    # =====================================================
 
     response = client.responses.create(
 
@@ -1204,10 +1692,22 @@ for iteration in range(MAX_ITERATIONS):
 
     )
 
+# =========================================================
+
+# Maximum Iteration Fallback
+
+# =========================================================
+
 else:
 
     print(
 
-        "\nAgent stopped because max_iterations was reached."
+        "\nAgent stopped because "
+
+        "max_iterations was reached."
 
     )
+
+    if research_state.findings:
+
+        run_final_citation_synthesis()
